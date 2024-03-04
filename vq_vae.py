@@ -11,24 +11,50 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-class Codebook():
-  def __init__(self,w,h,d):
-    self.codebook=torch.randn(w,h,d)
+def get_device():
+  return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+Device=get_device()
+
+class Codebook(nn.Module):
+  def __init__(self,d,w,h):
+    super(Codebook,self).__init__()
+    self.register_parameter('codebook', nn.Parameter(torch.randn(w,h,d).to(Device),requires_grad=True))
 
   def get_code(self,x):
-    w,h,d=self.codebook.shape
+    b,d=x.shape
+    x=x.view(b,1,1,d)
+    wc,hc,d=self.codebook.shape
     dist_codebook=torch.norm(self.codebook-x,dim=-1)
-    emb_index=torch.argmin(dist_codebook)
-    return self.codebook.view(w*h,d)[emb_index]
+    dist_codebook=dist_codebook.view(b,wc*hc)
+    emb_index=torch.argmin(dist_codebook,dim=1)
+    return self.codebook.view(wc*hc,d)[emb_index]
 
   def get_embedding(self,x):
-    b,w,h,d=x.shape
+    b,d,w,h=x.shape
     w2,h2,d2=self.codebook.shape
-    for k in range(b):
-      for i in range(w):
-        for j in range(h):
-          x[k,i,j]=self.get_code(x[k,i,j])
+    zx=torch.zeros(b,d,w,h).to(Device)
+    for i in range(w):
+      for j in range(h):
+        x[:,:,i,j]=self.get_code(x[:,:,i,j])
     return x
+  
+'''code=Codebook(5,2,2)
+x=torch.randn(2,5)
+x2=torch.randn(2,5,3,3)
+print(code.codebook)
+print(code.get_embedding(x2))'''
+
+class Residual_blocks(nn.Module):
+  def __init__(self,in_channel,kernel=3,stride=1,padding=1):
+    super(Residual_blocks,self) .__init__()
+
+    self.conv1=nn.Conv2d(in_channel,in_channel,kernel,stride,padding)
+    self.conv2=nn.Conv2d(in_channel,in_channel,kernel,stride,padding)
+    self.gn1=nn.GroupNorm(in_channel,in_channel)
+  def forward(self,x):
+    x1=F.silu(self.conv1(x))
+    x2=self.conv2(x1) 
+    return self.gn1(x+x2)
 
 class Encoder(nn.Module):
   def __init__(self,in_channels,out_channels,kernel,stride=2):
@@ -36,32 +62,35 @@ class Encoder(nn.Module):
 
     self.conv1=nn.Conv2d(in_channels,out_channels,kernel,stride)
     self.conv2=nn.Conv2d(out_channels,out_channels*2,kernel,stride)
-    self.conv3=nn.Conv2d(out_channels*2,out_channels*4,kernel,stride)
+    self.bn1=nn.BatchNorm2d(out_channels)
+    self.bn2=nn.BatchNorm2d(out_channels*2)
+    self.residual=Residual_blocks(out_channels*2)
 
   def forward(self,x):
-    x=F.relu(self.conv1(x))
-    x=F.relu(self.conv2(x))
-    x=F.relu(self.conv3(x))
+    x=self.bn1(F.silu(self.conv1(x)))
+    x=self.bn2(F.silu(self.conv2(x)))
+    x=self.residual(x)
+    #x=self.bn3(F.silu(self.conv3(x)))
     return x
 
 '''enc=Encoder(1,16,2)
 x=torch.randn(2,1,28,28)
 enc(x).shape,enc(x)'''
 
+   
 class Decoder(nn.Module):
-  def __init__(self,in_channels,out_channels,kernel,stride=2):
+  def __init__(self,in_channels,out_channels,kernel=4,stride=2):
     super(Decoder,self).__init__()
     self.conv1=nn.ConvTranspose2d(in_channels,in_channels//2,kernel,stride)
-    self.conv2=nn.ConvTranspose2d(in_channels//2,in_channels//4,kernel,stride)
-    self.conv3=nn.ConvTranspose2d(in_channels//4,in_channels//8,kernel,stride)
-    self.conv4=nn.ConvTranspose2d(in_channels//8,out_channels,kernel_size=5,stride=1)
-
+    self.conv2=nn.ConvTranspose2d(in_channels//2,out_channels,kernel,stride)
+    self.residual=Residual_blocks(in_channels)
+    self.bn1=nn.BatchNorm2d(in_channels//2)
+    self.bn2=nn.BatchNorm2d(in_channels//4)
 
   def forward(self,x):
-    x=F.relu(self.conv1(x))
-    x=F.relu(self.conv2(x))
-    x=F.relu(self.conv3(x))
-    x=F.relu(self.conv4(x))
+    x=self.residual(x)    
+    x=self.bn1(F.silu(self.conv1(x)))
+    x=(self.conv2(x))
     return x
 
 '''dec=Decoder(64,1,2)
@@ -71,16 +100,25 @@ dec(x).shape,dec(x)'''
 class VQ_VAE(nn.Module):
   def __init__(self):
     super(VQ_VAE,self).__init__()
-    self.codebook=Codebook(64,3,3)
+    self.codebook=Codebook(32,5,5)
     self.encoder=Encoder(1,16,2)
-    self.decoder=Decoder(64,1,2)
+    self.decoder=Decoder(32,1,2)
 
   def forward(self,x):
     code=self.codebook.codebook
     x=self.encoder(x)
+    b,d,w,h=x.shape
     zx=self.codebook.get_embedding(x)
-    dx=self.decoder(x+(zx-x).detach())
+    dx=self.decoder(x+((zx-x).detach()))
     return x,zx,dx
+
+
+'''The encoder consists
+of 2 strided convolutional layers with stride 2 and window size 4 × 4, followed by two residual
+3 × 3 blocks (implemented as silu, 3x3 conv, silu, 1x1 conv), all having 256 hidden units. The
+decoder similarly has two residual 3 × 3 blocks, followed by two transposed convolutions with stride
+2 and window size 4 × 4. '''
+
 
 '''vq_vae=VQ_VAE()
 x=torch.randn(2,1,28,28)
@@ -88,5 +126,5 @@ y=vq_vae(x)
 
 for i in y:
   print(i.shape)
-y'''
-
+print(y)
+'''
