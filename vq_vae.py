@@ -38,6 +38,41 @@ class Codebook(nn.Module):
         x[:,:,i,j]=self.get_code(x[:,:,i,j])
     return x
   
+  def get_emb_token(self,x):
+    b,d=x.shape
+    x=x.view(b,1,1,d)
+    wc,hc,d=self.codebook.shape
+    dist_codebook=torch.norm(self.codebook-x,dim=-1)
+    dist_codebook=dist_codebook.view(b,wc*hc)
+    emb_index=torch.argmin(dist_codebook,dim=1)
+    return emb_index
+  
+  def get_emb_token_all(self,x):
+    b,d,w,h=x.shape
+    w2,h2,d2=self.codebook.shape
+    zx=torch.zeros(b,w,h).to(Device)
+    for i in range(w):
+      for j in range(h):
+        zx[:,i,j]=self.get_emb_token(x[:,:,i,j])
+    return zx
+  
+  def emb_vector(self,x):
+    b,w,h=x.shape
+    wc,hc,d=self.codebook.shape
+    zx=torch.zeros(b,d,w,h).to(Device)
+    for i in range(w):
+      for j in range(h):
+        zx[:,:,i,j]=self.codebook.view(wc*hc,d)[x[:,i,j].long()]
+    return zx
+
+
+'''x=torch.randn(2,5,3,3)
+code=Codebook(5,3,3)
+print(code.codebook)
+y=code.get_emb_token_all(x)
+print(code.emb_vector(y).permute(0,2,3,1)) ''' 
+
+
 '''code=Codebook(5,2,2)
 x=torch.randn(2,5)
 x2=torch.randn(2,5,3,3)
@@ -90,7 +125,7 @@ class Decoder(nn.Module):
   def forward(self,x):
     x=self.residual(x)    
     x=self.bn1(F.silu(self.conv1(x)))
-    x=(self.conv2(x))
+    x=F.tanh(self.conv2(x))
     return x
 
 '''dec=Decoder(64,1,2)
@@ -100,7 +135,7 @@ dec(x).shape,dec(x)'''
 class VQ_VAE(nn.Module):
   def __init__(self):
     super(VQ_VAE,self).__init__()
-    self.codebook=Codebook(32,5,5)
+    self.codebook=Codebook(32,10,10)
     self.encoder=Encoder(1,16,2)
     self.decoder=Decoder(32,1,2)
 
