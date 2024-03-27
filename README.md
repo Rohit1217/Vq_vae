@@ -46,7 +46,7 @@
 * The masking is done in the raster scan order 
 
 ## Samples Generated
- ![Samples](samples (6).jpeg)
+ ![Samples](samples.jpeg)
  
 ## Future changes/work
 
