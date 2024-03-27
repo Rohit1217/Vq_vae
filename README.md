@@ -9,8 +9,8 @@
 
 ## Architecture Details
 ### Codebook
- *Codebook size 10x10
- *Codebook feature dimension 32
+ * Codebook size 10x10
+ * Codebook feature dimension 32
 ### VAE-Encoder
   * 2 convolutions of size 2x2 with stride 2
   * One Residual block with 2 conv of size 3x3 with padding 1,stride 1 to maintain spatial dimension. Group norm after addition
@@ -46,7 +46,7 @@
 * The masking is done in the raster scan order 
 
 ## Samples Generated
- ![Samples](sample.jpeg)
+ ![Samples](samples (6).jpeg)
  
 ## Future changes/work
 
